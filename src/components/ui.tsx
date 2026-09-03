@@ -243,21 +243,40 @@ export function Modal({
 }) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
+  /* Latest callback in a ref: parent re-renders (every keystroke of a
+     controlled input inside the modal) must NOT re-run the effect below,
+     or focus would be yanked back to the panel mid-typing. */
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const wasOpen = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      wasOpen.current = false;
+      return;
+    }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseRef.current();
     };
     document.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    panelRef.current?.focus();
+    /* Focus the panel exactly once, on the closed→open transition only.
+       If a field inside already grabbed focus (e.g. autoFocus), leave it. */
+    if (!wasOpen.current) {
+      wasOpen.current = true;
+      requestAnimationFrame(() => {
+        const panel = panelRef.current;
+        if (!panel) return;
+        const ae = document.activeElement;
+        if (!ae || !panel.contains(ae)) panel.focus();
+      });
+    }
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prev;
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   return (
