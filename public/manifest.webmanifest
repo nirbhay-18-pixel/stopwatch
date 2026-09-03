@@ -1,0 +1,27 @@
+{
+  "name": "Tempo — Study & Activity Time Tracker",
+  "short_name": "Tempo",
+  "description": "Offline study & activity time tracker with stopwatch and countdown sessions, exact timestamps, history, statistics and a daily timeline.",
+  "id": "tempo-tracker",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0d1210",
+  "theme_color": "#155c4a",
+  "categories": ["productivity", "education"],
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

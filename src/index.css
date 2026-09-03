@@ -1,1 +1,246 @@
 @import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   Tempo design tokens — "field instrument" palette.
+   Light: cool paper + pine ink. Dark: deep moss charcoal, layered not flat.
+--------------------------------------------------------------------------- */
+:root {
+  --bg: 240 243 240;
+  --surface: 251 252 251;
+  --raise: 231 236 232;
+  --ink: 21 33 28;
+  --mut: 97 113 105;
+  --line: 215 223 217;
+  --pine: 21 92 74;
+  --pinedeep: 12 62 49;
+  --study: 188 108 24;
+  --other: 17 122 110;
+  --danger: 184 60 46;
+
+  /* LCD screen — fixed in both themes, like a real instrument display */
+  --screen: 10 21 17;
+  --screenline: 30 52 44;
+  --lcd: 158 240 210;
+  --lcd-dim: 84 132 113;
+}
+
+.dark {
+  --bg: 13 18 16;
+  --surface: 21 28 25;
+  --raise: 30 40 35;
+  --ink: 230 240 234;
+  --mut: 141 158 149;
+  --line: 40 53 46;
+  --pine: 86 201 167;
+  --pinedeep: 130 226 196;
+  --study: 233 163 82;
+  --other: 90 205 186;
+  --danger: 231 109 92;
+}
+
+@theme inline {
+  --color-bg: rgb(var(--bg));
+  --color-surface: rgb(var(--surface));
+  --color-raise: rgb(var(--raise));
+  --color-ink: rgb(var(--ink));
+  --color-mut: rgb(var(--mut));
+  --color-line: rgb(var(--line));
+  --color-pine: rgb(var(--pine));
+  --color-pinedeep: rgb(var(--pinedeep));
+  --color-study: rgb(var(--study));
+  --color-other: rgb(var(--other));
+  --color-danger: rgb(var(--danger));
+  --color-screen: rgb(var(--screen));
+  --color-screenline: rgb(var(--screenline));
+  --color-lcd: rgb(var(--lcd));
+  --color-lcddim: rgb(var(--lcd-dim));
+
+  --font-display: "Space Grotesk", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --font-body: ui-sans-serif, system-ui, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono",
+    Consolas, monospace;
+}
+
+/* ------------------------------- base ----------------------------------- */
+html {
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  background-color: rgb(var(--bg));
+  color: rgb(var(--ink));
+  font-family: var(--font-body);
+  font-size: 15px;
+  letter-spacing: 0.005em;
+  min-height: 100dvh;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* Layered ambient background: faint dot grid + two slow drifting glows */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-image: radial-gradient(rgb(var(--ink) / 0.055) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: linear-gradient(to bottom, black 0%, transparent 75%);
+  pointer-events: none;
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  z-index: -1;
+  background:
+    radial-gradient(38% 34% at 12% 8%, rgb(var(--pine) / 0.10), transparent 70%),
+    radial-gradient(34% 30% at 92% 18%, rgb(var(--study) / 0.09), transparent 70%),
+    radial-gradient(30% 30% at 70% 95%, rgb(var(--other) / 0.07), transparent 70%);
+  animation: drift 46s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes drift {
+  from { transform: translate3d(-1.5%, -1%, 0) scale(1); }
+  to   { transform: translate3d(1.5%, 2%, 0) scale(1.05); }
+}
+
+::selection {
+  background: rgb(var(--pine) / 0.25);
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--pine));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Scrollbars (desktop) */
+@media (pointer: fine) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--line)) transparent;
+  }
+}
+
+/* ---------------------------- components -------------------------------- */
+@layer components {
+  .card {
+    @apply bg-surface border border-line rounded-xl;
+    box-shadow: 0 1px 2px rgb(15 30 24 / 0.04), 0 8px 24px -18px rgb(15 30 24 / 0.25);
+  }
+  .btn,
+  .btn-primary,
+  .btn-soft,
+  .btn-outline,
+  .btn-ghost,
+  .btn-danger,
+  .btn-dangersoft {
+    @apply inline-flex items-center justify-center gap-2 font-semibold rounded-lg select-none
+      transition-all duration-150 active:scale-[0.97] disabled:opacity-45 disabled:pointer-events-none
+      whitespace-nowrap;
+  }
+  .btn-primary {
+    @apply bg-pine text-bg dark:text-[#08130f] hover:brightness-110 shadow-sm;
+    box-shadow: 0 6px 16px -8px rgb(var(--pine) / 0.55);
+  }
+  .btn-soft {
+    @apply bg-raise text-ink hover:bg-line/70;
+  }
+  .btn-outline {
+    @apply border border-line bg-surface text-ink hover:border-mut/60 hover:bg-raise/60;
+  }
+  .btn-ghost {
+    @apply text-mut hover:text-ink hover:bg-raise;
+  }
+  .btn-danger {
+    @apply bg-danger text-white hover:brightness-110;
+  }
+  .btn-dangersoft {
+    @apply bg-danger/10 text-danger hover:bg-danger/18;
+  }
+  .icon-btn {
+    @apply inline-flex items-center justify-center h-9 w-9 rounded-lg text-mut transition-all duration-150
+      hover:text-ink hover:bg-raise active:scale-95;
+  }
+  .input {
+    @apply w-full h-11 px-3.5 rounded-lg bg-surface border border-line text-ink text-[15px]
+      placeholder:text-mut/70 transition-colors focus:border-pine focus:outline-none
+      focus:ring-2 focus:ring-pine/25;
+  }
+  .label {
+    @apply block text-[11px] font-bold uppercase tracking-[0.14em] text-mut mb-1.5;
+  }
+  .chip,
+  .chip-off,
+  .chip-on {
+    @apply inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full border text-[13px] font-semibold
+      transition-all duration-150 active:scale-95 cursor-pointer select-none whitespace-nowrap;
+  }
+  .chip-off {
+    @apply border-line bg-surface text-mut hover:text-ink hover:border-mut/50;
+  }
+  .chip-on {
+    @apply border-pine/40 bg-pine/12 text-pine;
+  }
+  .tick-label {
+    @apply text-[10.5px] font-bold uppercase tracking-[0.18em] text-mut;
+  }
+}
+
+/* ------------------------------ motion ---------------------------------- */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pop {
+  from { opacity: 0; transform: scale(0.955) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes blinkc {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0.25; }
+}
+@keyframes pulseDot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.7); opacity: 0.45; }
+}
+@keyframes breathe {
+  0%, 100% { text-shadow: 0 0 18px rgb(158 240 210 / 0.28); }
+  50% { text-shadow: 0 0 30px rgb(158 240 210 / 0.5); }
+}
+@keyframes growY {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+@keyframes growX {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes spinSlow {
+  to { transform: rotate(360deg); }
+}
+
+.animate-view { animation: fadeUp 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-pop { animation: pop 0.22s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-toast { animation: toastIn 0.24s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-growY { animation: growY 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; transform-origin: bottom; }
+.animate-growX { animation: growX 0.6s cubic-bezier(0.22, 1, 0.36, 1) both; transform-origin: left; }
+.colon-run { animation: blinkc 1s steps(1) infinite; }
+.pulse-dot { animation: pulseDot 1.6s ease-in-out infinite; }
+.lcd-run { animation: breathe 2.6s ease-in-out infinite; }
+.spin-slow { animation: spinSlow 1.1s linear infinite; }
+
+.tabular { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
