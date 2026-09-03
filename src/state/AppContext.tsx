@@ -27,6 +27,7 @@ import {
   type ActiveTimer,
   type BackupPayload,
   type Category,
+  type Lap,
   type Mode,
   type Session,
   type Settings,
@@ -69,7 +70,6 @@ interface AppCtx {
   sessions: Session[];
   categories: Category[];
   activeTimer: ActiveTimer | null;
-  clock: number; // refreshed ~4×/s while a timer is active
   timesUp: Session | null;
   dismissTimesUp: () => void;
   settings: Settings;
@@ -81,6 +81,8 @@ interface AppCtx {
   startTimer: (form: StartForm) => boolean;
   pauseTimer: () => void;
   resumeTimer: () => void;
+  /** Records a lap from wall-clock timestamps and persists immediately. */
+  recordLap: () => void;
   stopAndSave: () => Promise<Session | null>;
   cancelTimer: () => void;
   updateSession: (s: Session) => Promise<void>;
@@ -149,7 +151,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [activeTimer, setActiveTimer] = useState<ActiveTimer | null>(null);
-  const [clock, setClock] = useState(() => Date.now());
   const [timesUp, setTimesUp] = useState<Session | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [themeDark, setThemeDark] = useState(false);
@@ -225,7 +226,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setCategories(cats);
         setSessions(sess);
         if (at && (at.status === "running" || at.status === "paused") && at.startedAt > 0) {
-          setActiveTimer(at); // elapsed recomputes from timestamps automatically
+          // elapsed recomputes from timestamps automatically; `laps` is
+          // normalized so timers persisted before the lap feature still recover.
+          setActiveTimer({ ...at, laps: Array.isArray(at.laps) ? at.laps : [] });
         }
       } catch {
         if (alive) toast("error", "Couldn't open the local database — data may not persist.");
@@ -244,9 +247,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!activeTimer) return;
     let lastPersist = Date.now();
+    /* This loop only detects countdown completion and keeps the persisted
+       state fresh — it deliberately does NOT setState, so the app tree does
+       not re-render on every tick. Views animate via their own useNow(). */
     const tick = () => {
       const now = Date.now();
-      setClock(now);
       const t = timerRef.current;
       if (!t) return;
       if (t.status === "running") {
@@ -305,6 +310,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         pausedAt: null,
         countdownMs: form.timerType === "countdown" ? Math.round(form.countdownMs) : 0,
         status: "running",
+        laps: [],
       };
       persistTimer(t);
       setTimesUp(null);
@@ -335,11 +341,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toast("info", "Resumed — keep going.");
   }, [persistTimer, toast]);
 
+  /**
+   * Lap / split. Pure timestamp math:
+   *   total       = accumulatedMs + (Date.now() - resumeAt)   (pauses excluded)
+   *   lapDuration = total - previousLapTotal                  (first lap: total)
+   * The lap list is persisted to IndexedDB immediately, so a refresh mid-run
+   * never loses recorded laps.
+   */
+  const recordLap = useCallback(() => {
+    const t = timerRef.current;
+    if (!t || t.status !== "running" || t.resumeAt == null) return;
+    const now = Date.now();
+    const laps = Array.isArray(t.laps) ? t.laps : [];
+    const total = getElapsed(t, now);
+    const prevTotal = laps.length > 0 ? laps[laps.length - 1].totalElapsed : 0;
+    const lap: Lap = {
+      lapNumber: laps.length + 1,
+      timestamp: now,
+      lapDuration: Math.max(0, Math.round(total - prevTotal)),
+      totalElapsed: Math.round(total),
+      /* countdown only — clamped so it can never go negative */
+      ...(t.timerType === "countdown"
+        ? { remaining: Math.max(0, Math.round(t.countdownMs - total)) }
+        : {}),
+    };
+    persistTimer({ ...t, laps: [...laps, lap] });
+  }, [persistTimer]);
+
   const clearTimer = useCallback(() => {
     persistTimer(null);
   }, [persistTimer]);
 
   const buildSession = useCallback((t: ActiveTimer, endedAt: number, duration: number): Session => {
+    const laps = Array.isArray(t.laps) ? t.laps : [];
     return {
       id: uid(),
       mode: t.mode,
@@ -351,6 +385,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       endedAt,
       duration,
       pausedMs: Math.max(0, endedAt - t.startedAt - duration),
+      // laps are subdivisions of `duration` — saved as-is, no final lap is invented
+      ...(laps.length > 0 ? { laps: [...laps] } : {}),
       createdAt: Date.now(),
     };
   }, []);
@@ -553,7 +589,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       sessions,
       categories,
       activeTimer,
-      clock,
       timesUp,
       dismissTimesUp: () => setTimesUp(null),
       settings,
@@ -565,6 +600,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       startTimer,
       pauseTimer,
       resumeTimer,
+      recordLap,
       stopAndSave,
       cancelTimer,
       updateSession,
@@ -575,10 +611,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       clearAll,
     }),
     [
-      ready, sessions, categories, activeTimer, clock, timesUp, settings, themeDark,
+      ready, sessions, categories, activeTimer, timesUp, settings, themeDark,
       updateSettings, toasts, toast, dismissToast, startTimer, pauseTimer, resumeTimer,
-      stopAndSave, cancelTimer, updateSession, deleteSession, addCategory, deleteCategory,
-      importData, clearAll,
+      recordLap, stopAndSave, cancelTimer, updateSession, deleteSession, addCategory,
+      deleteCategory, importData, clearAll,
     ],
   );
 

@@ -6,6 +6,7 @@ import { Btn, Confirm, Field, I, Segmented } from "../components/ui";
 import {
   MODE_LABEL,
   clampInt,
+  fmtClock,
   fmtDate,
   fmtDur,
   fmtDurLong,
@@ -13,6 +14,8 @@ import {
   getElapsed,
   msToHMS,
   pad2,
+  type ActiveTimer,
+  type Lap,
   type Mode,
   type TimerType,
 } from "../lib/core";
@@ -40,6 +43,108 @@ function ClockDigits({ ms, running, color }: { ms: number; running: boolean; col
         :
       </span>
       <span>{pad2(s)}</span>
+    </div>
+  );
+}
+
+/** Big, touch-friendly lap/split button — pine "flag" treatment. */
+function LapButton({
+  onLap,
+  enabled,
+  nextLap,
+}: {
+  onLap: () => void;
+  enabled: boolean;
+  nextLap: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onLap}
+      disabled={!enabled}
+      aria-label={enabled ? `Record lap ${nextLap}` : "Lap is only available while the timer is running"}
+      title={enabled ? `Record lap ${nextLap}` : "Resume the timer to record laps"}
+      className="btn w-full h-[52px] px-6 text-[15px] rounded-xl border border-pine/45 bg-pine/8 text-pine hover:bg-pine/14 active:bg-pine/20"
+    >
+      <I n="flag" className="h-[18px] w-[18px]" />
+      Lap
+      {nextLap > 1 && (
+        <span className="font-mono text-[12px] font-bold tabular rounded-md px-1.5 py-0.5 bg-pine/15">
+          #{nextLap}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** Live lap history — newest first, instrument-styled like the LCD screen. */
+function LapPanel({ timer, laps, now }: { timer: ActiveTimer; laps: Lap[]; now: number }) {
+  const newest = laps[laps.length - 1];
+  const running = timer.status === "running";
+  const lastTotal = newest?.totalElapsed ?? 0;
+  const liveLap = Math.max(0, getElapsed(timer, now) - lastTotal);
+  return (
+    <div
+      className="mx-4 mb-4 rounded-xl border border-screenline bg-screen overflow-hidden"
+      style={{ boxShadow: "inset 0 2px 12px rgba(0,0,0,0.45)" }}
+      aria-label="Lap history"
+    >
+      <div className="flex items-center justify-between gap-2 px-4 pt-3">
+        <span
+          className="inline-flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-[0.16em]"
+          style={{ color: LCD }}
+        >
+          <I n="flag" className="h-3.5 w-3.5" />
+          Lap history
+          <span
+            className="rounded px-1.5 py-0.5 font-mono text-[10px] leading-none tabular"
+            style={{ background: "rgba(158,240,210,0.14)" }}
+          >
+            {laps.length}
+          </span>
+        </span>
+        <span className="font-mono text-[11px] tabular" style={{ color: running ? LCD : LCD_PAUSED }}>
+          {running ? (
+            <>
+              Lap {laps.length + 1} · {fmtClock(liveLap)}
+            </>
+          ) : (
+            <>Lap {laps.length + 1} · paused</>
+          )}
+        </span>
+      </div>
+      <ul className="mt-2 max-h-[230px] overflow-y-auto">
+        {[...laps].reverse().map((lap) => (
+          <li
+            key={lap.lapNumber}
+            className="animate-pop flex items-center justify-between gap-3 px-4 py-2.5 border-t"
+            style={{ borderColor: "rgba(158,240,210,0.07)" }}
+          >
+            <div className="min-w-0">
+              <p className="font-mono text-[12.5px] font-bold" style={{ color: LCD }}>
+                Lap {lap.lapNumber}
+              </p>
+              <p className="font-mono text-[10.5px] mt-0.5 truncate" style={{ color: LCD_DIM }}>
+                {fmtDate(lap.timestamp)} · {fmtTime(lap.timestamp)}
+              </p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="font-mono text-[14px] font-extrabold tabular leading-none" style={{ color: LCD }}>
+                {fmtDur(lap.lapDuration)}
+              </p>
+              <p className="font-mono text-[10.5px] tabular mt-1" style={{ color: LCD_DIM }}>
+                Total {fmtDur(lap.totalElapsed)}
+                {lap.remaining != null && <> · {fmtDur(lap.remaining)} left</>}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="sr-only" role="status" aria-live="polite">
+        {newest
+          ? `Lap ${newest.lapNumber} recorded. Lap time ${fmtDurLong(newest.lapDuration)}, total ${fmtDurLong(newest.totalElapsed)}.`
+          : ""}
+      </p>
     </div>
   );
 }
@@ -82,6 +187,7 @@ export function TimerView() {
     (clampInt(cdH, 0, 99) * 3600 + clampInt(cdM, 0, 59) * 60 + clampInt(cdS, 0, 59)) * 1000;
 
   const elapsed = activeTimer ? getElapsed(activeTimer, now) : 0;
+  const laps = activeTimer?.laps ?? [];
   const displayIsCountdown = activeTimer ? activeTimer.timerType === "countdown" : timerType === "countdown";
   const totalMs = activeTimer ? activeTimer.countdownMs : countdownMs;
   const displayMs = activeTimer
@@ -251,6 +357,9 @@ export function TimerView() {
               : "No timer running."}
           </p>
 
+          {/* live lap history (only once laps exist for the active session) */}
+          {activeTimer && laps.length > 0 && <LapPanel timer={activeTimer} laps={laps} now={now} />}
+
           {/* controls */}
           <div className="p-4 sm:p-5">
             {!active ? (
@@ -258,28 +367,35 @@ export function TimerView() {
                 {displayIsCountdown ? "Start countdown" : "Start tracking"}
               </Btn>
             ) : running ? (
-              <div className="grid grid-cols-2 gap-2.5">
-                <Btn variant="primary" size="lg" icon="stop" className="col-span-2" onClick={() => void app.stopAndSave()}>
+              <div className="space-y-2.5">
+                <Btn variant="primary" size="lg" icon="stop" className="w-full" onClick={() => void app.stopAndSave()}>
                   Stop &amp; save
                 </Btn>
-                <Btn variant="soft" size="lg" icon="pause" onClick={app.pauseTimer}>
-                  Pause
-                </Btn>
-                <Btn variant="dangersoft" size="lg" icon="x" onClick={() => setConfirmCancel(true)}>
-                  Cancel
-                </Btn>
+                <LapButton onLap={app.recordLap} enabled={true} nextLap={laps.length + 1} />
+                <div className="grid grid-cols-2 gap-2.5">
+                  <Btn variant="soft" size="lg" icon="pause" onClick={app.pauseTimer}>
+                    Pause
+                  </Btn>
+                  <Btn variant="dangersoft" size="lg" icon="x" onClick={() => setConfirmCancel(true)}>
+                    Cancel
+                  </Btn>
+                </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-2.5">
-                <Btn variant="primary" size="lg" icon="play" className="col-span-2" onClick={app.resumeTimer}>
+              <div className="space-y-2.5">
+                <Btn variant="primary" size="lg" icon="play" className="w-full" onClick={app.resumeTimer}>
                   Resume
                 </Btn>
-                <Btn variant="outline" size="lg" icon="stop" onClick={() => void app.stopAndSave()}>
-                  Stop &amp; save
-                </Btn>
-                <Btn variant="dangersoft" size="lg" icon="x" onClick={() => setConfirmCancel(true)}>
-                  Cancel
-                </Btn>
+                {/* laps pause with the timer — enabled again on Resume */}
+                <LapButton onLap={app.recordLap} enabled={false} nextLap={laps.length + 1} />
+                <div className="grid grid-cols-2 gap-2.5">
+                  <Btn variant="outline" size="lg" icon="stop" onClick={() => void app.stopAndSave()}>
+                    Stop &amp; save
+                  </Btn>
+                  <Btn variant="dangersoft" size="lg" icon="x" onClick={() => setConfirmCancel(true)}>
+                    Cancel
+                  </Btn>
+                </div>
               </div>
             )}
             <p className="mt-3 flex items-center justify-center gap-1.5 text-[11.5px] text-mut text-center">

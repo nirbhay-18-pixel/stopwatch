@@ -13,6 +13,7 @@ import {
   fmtTime,
   fromLocalInput,
   isToday,
+  lapsOf,
   msToHMS,
   sessionMatches,
   startOfMonth,
@@ -46,6 +47,15 @@ export function HistoryView() {
   const [rangeF, setRangeF] = useState<RangeFilter>("all");
   const [editing, setEditing] = useState<Session | null>(null);
   const [deleting, setDeleting] = useState<Session | null>(null);
+  const [openLaps, setOpenLaps] = useState<Set<string>>(new Set());
+
+  const toggleLaps = (id: string) =>
+    setOpenLaps((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const filtered = useMemo(() => {
     const now = Date.now();
@@ -243,6 +253,50 @@ export function HistoryView() {
                           </div>
                         </div>
                       </div>
+
+                      {/* laps — expandable, only for sessions that recorded any */}
+                      {lapsOf(s).length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-line">
+                          <button
+                            type="button"
+                            onClick={() => toggleLaps(s.id)}
+                            aria-expanded={openLaps.has(s.id)}
+                            aria-controls={`laps-${s.id}`}
+                            className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-pine transition-all active:scale-[0.97]"
+                          >
+                            <I n="flag" className="h-4 w-4" />
+                            {lapsOf(s).length} Lap{lapsOf(s).length === 1 ? "" : "s"}
+                            <I
+                              n="chevronDown"
+                              className={`h-3.5 w-3.5 transition-transform duration-200 ${openLaps.has(s.id) ? "rotate-180" : ""}`}
+                            />
+                          </button>
+                          {openLaps.has(s.id) && (
+                            <ul id={`laps-${s.id}`} className="mt-2.5 grid gap-1.5 animate-view">
+                              {lapsOf(s).map((lap) => (
+                                <li key={lap.lapNumber} className="rounded-lg bg-raise/55 px-3 py-2">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span className="font-mono text-[11.5px] font-bold text-mut tabular">
+                                      Lap {lap.lapNumber}
+                                    </span>
+                                    <span className="font-mono text-[13px] font-extrabold tabular">{fmtDur(lap.lapDuration)}</span>
+                                  </div>
+                                  <div className="mt-0.5 flex items-center justify-between gap-3 font-mono text-[11px] text-mut tabular">
+                                    <span>
+                                      {dayKey(lap.timestamp) !== dayKey(s.startedAt) && <>{fmtDate(lap.timestamp)} · </>}
+                                      {fmtTime(lap.timestamp)}
+                                    </span>
+                                    <span>
+                                      Total {fmtDur(lap.totalElapsed)}
+                                      {lap.remaining != null && <> · {fmtDur(lap.remaining)} left</>}
+                                    </span>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>

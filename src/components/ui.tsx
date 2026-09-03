@@ -15,7 +15,7 @@ export type IconName =
   | "play" | "pause" | "stop" | "rotate"
   | "plus" | "x" | "check" | "trash" | "pencil" | "search"
   | "download" | "upload" | "book" | "shapes" | "alert"
-  | "chevronDown" | "clock" | "hourglass" | "arrowRight" | "database" | "calendar" | "info";
+  | "chevronDown" | "clock" | "hourglass" | "arrowRight" | "database" | "calendar" | "info" | "flag";
 
 const STROKE_ICONS: Record<string, ReactNode> = {
   grid: (
@@ -153,6 +153,12 @@ const STROKE_ICONS: Record<string, ReactNode> = {
     <>
       <circle cx="12" cy="12" r="8.5" />
       <path d="M12 11v5M12 7.8h.01" />
+    </>
+  ),
+  flag: (
+    <>
+      <path d="M5.5 21.5v-17" />
+      <path d="M5.5 5c4.4-2.4 9.1 2.4 13.5 0v8.6c-4.4 2.4-9.1-2.4-13.5 0" />
     </>
   ),
 };

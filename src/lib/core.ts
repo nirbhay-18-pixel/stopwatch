@@ -7,6 +7,14 @@ export type Mode = "study" | "other";
 export type TimerType = "stopwatch" | "countdown";
 export type TimerStatus = "running" | "paused";
 
+export interface Lap {
+  lapNumber: number; // 1-based, in recording order
+  timestamp: number; // epoch ms — exact instant the lap was taken
+  lapDuration: number; // active ms since the previous lap (first lap: since session start)
+  totalElapsed: number; // total active elapsed ms at the moment of the lap
+  remaining?: number; // countdown only: ms still on the countdown when the lap was taken
+}
+
 export interface Session {
   id: string;
   mode: Mode;
@@ -18,8 +26,12 @@ export interface Session {
   endedAt: number; // epoch ms, exact
   duration: number; // active ms (excludes paused time)
   pausedMs: number; // total paused ms within the session
+  laps?: Lap[]; // subdivisions of `duration` — never extra time
   createdAt: number;
 }
+
+/** Laps for a session; old sessions saved before laps existed safely resolve to []. */
+export const lapsOf = (s: Session): Lap[] => (Array.isArray(s.laps) ? s.laps : []);
 
 export interface Category {
   id: string;
@@ -42,6 +54,7 @@ export interface ActiveTimer {
   pausedAt: number | null;
   countdownMs: number; // 0 for stopwatch
   status: TimerStatus;
+  laps: Lap[]; // recorded this session; persisted on every change so refresh never loses them
 }
 
 export interface Settings {
@@ -235,22 +248,35 @@ function csvCell(v: string | number): string {
 
 export function sessionsToCSV(sessions: Session[]): string {
   const head = [
+    "Session ID",
     "Mode",
-    "Subject/Category",
+    "Category",
     "Topic",
     "Task",
-    "Timer",
-    "Started (ISO)",
-    "Stopped (ISO)",
-    "Started (local)",
-    "Stopped (local)",
-    "Duration (seconds)",
-    "Duration",
+    "Timer Type",
+    "Session Start (ISO)",
+    "Session Stop (ISO)",
+    "Session Start (local)",
+    "Session Stop (local)",
+    "Session Duration (seconds)",
+    "Session Duration",
     "Paused (seconds)",
-    "ID",
+    "Lap Number",
+    "Lap Date",
+    "Lap Time",
+    "Lap Duration (seconds)",
+    "Lap Duration",
+    "Lap Total (seconds)",
+    "Lap Total",
+    "Countdown Remaining (seconds)",
   ].join(",");
-  const rows = sessions.map((s) =>
-    [
+
+  /* One row per lap when a session has laps; one row with blank lap columns
+     otherwise, so lap-less sessions still export correctly. */
+  const rows: string[] = [];
+  for (const s of sessions) {
+    const base = [
+      s.id,
       MODE_LABEL[s.mode],
       csvCell(s.category),
       csvCell(s.topic),
@@ -263,9 +289,28 @@ export function sessionsToCSV(sessions: Session[]): string {
       Math.round(s.duration / 1000),
       fmtDurLong(s.duration),
       Math.round(s.pausedMs / 1000),
-      s.id,
-    ].join(","),
-  );
+    ];
+    const laps = lapsOf(s);
+    if (laps.length === 0) {
+      rows.push([...base, "", "", "", "", "", "", ""].join(","));
+    } else {
+      for (const lap of laps) {
+        rows.push(
+          [
+            ...base,
+            lap.lapNumber,
+            fmtDate(lap.timestamp),
+            fmtTime(lap.timestamp),
+            Math.round(lap.lapDuration / 1000),
+            fmtDurLong(lap.lapDuration),
+            Math.round(lap.totalElapsed / 1000),
+            fmtDurLong(lap.totalElapsed),
+            lap.remaining != null ? Math.round(lap.remaining / 1000) : "",
+          ].join(","),
+        );
+      }
+    }
+  }
   return "\uFEFF" + [head, ...rows].join("\r\n");
 }
 
@@ -303,6 +348,31 @@ export function parseBackup(text: string): BackupPayload {
     const mode: Mode = r.mode === "other" ? "other" : "study";
     const timerType: TimerType = r.timerType === "countdown" ? "countdown" : "stopwatch";
     const pausedMs = Number.isFinite(Number(r.pausedMs)) && Number(r.pausedMs) > 0 ? Number(r.pausedMs) : 0;
+    /* Sanitize imported laps; tolerate backups made before laps existed. */
+    const rawLaps = Array.isArray((r as { laps?: unknown }).laps)
+      ? ((r as { laps: unknown[] }).laps)
+      : [];
+    const laps: Lap[] = [];
+    for (const rl of rawLaps) {
+      if (!rl || typeof rl !== "object") continue;
+      const o = rl as Partial<Lap>;
+      const ts = Number(o.timestamp);
+      if (!Number.isFinite(ts) || ts <= 0) continue;
+      const ld = Number(o.lapDuration);
+      const te = Number(o.totalElapsed);
+      const rem = Number(o.remaining);
+      laps.push({
+        lapNumber: 0, // renumbered below, in timestamp order
+        timestamp: ts,
+        lapDuration: Number.isFinite(ld) && ld > 0 ? ld : 0,
+        totalElapsed: Number.isFinite(te) && te > 0 ? te : 0,
+        ...(Number.isFinite(rem) && rem >= 0 ? { remaining: rem } : {}),
+      });
+    }
+    laps.sort((a, b) => a.timestamp - b.timestamp);
+    laps.forEach((l, i) => {
+      l.lapNumber = i + 1;
+    });
     sessions.push({
       id: typeof r.id === "string" && r.id ? r.id : uid(),
       mode,
@@ -314,6 +384,7 @@ export function parseBackup(text: string): BackupPayload {
       endedAt,
       duration,
       pausedMs,
+      ...(laps.length > 0 ? { laps } : {}),
       createdAt: Number.isFinite(Number(r.createdAt)) ? Number(r.createdAt) : now,
     });
   }
