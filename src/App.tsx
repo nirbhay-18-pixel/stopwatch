@@ -108,6 +108,9 @@ function useGoSafe() {
 }
 
 function Sidebar({ view, go }: { view: View; go: (v: View) => void }) {
+  const { activeTimer } = useApp();
+  const hasActiveTimer = activeTimer !== null;
+
   return (
     <aside className="hidden md:flex fixed inset-y-0 left-0 w-[232px] flex-col border-r border-line bg-surface z-40">
       <div className="h-16 px-5 flex items-center gap-2.5 border-b border-line shrink-0">
@@ -120,6 +123,7 @@ function Sidebar({ view, go }: { view: View; go: (v: View) => void }) {
       <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto" aria-label="Main navigation">
         {NAV.map((n) => {
           const on = view === n.v;
+          const isTimer = n.v === "timer";
           return (
             <button
               key={n.v}
@@ -133,6 +137,12 @@ function Sidebar({ view, go }: { view: View; go: (v: View) => void }) {
               {on && <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full bg-pine" />}
               <I n={n.icon} className="h-[19px] w-[19px]" />
               {n.label}
+              {isTimer && hasActiveTimer && (
+                <span className="relative flex h-2 w-2 ml-auto">
+                  <span className="pulse-dot absolute inline-flex h-full w-full rounded-full bg-pine" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-pine" />
+                </span>
+              )}
             </button>
           );
         })}
@@ -149,6 +159,9 @@ function Sidebar({ view, go }: { view: View; go: (v: View) => void }) {
 }
 
 function MobileNav({ view, go }: { view: View; go: (v: View) => void }) {
+  const { activeTimer } = useApp();
+  const hasActiveTimer = activeTimer !== null;
+
   return (
     <nav
       className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-line bg-surface"
@@ -158,6 +171,7 @@ function MobileNav({ view, go }: { view: View; go: (v: View) => void }) {
       <div className="grid grid-cols-5">
         {NAV.map((n) => {
           const on = view === n.v;
+          const isTimer = n.v === "timer";
           return (
             <button
               key={n.v}
@@ -171,6 +185,12 @@ function MobileNav({ view, go }: { view: View; go: (v: View) => void }) {
               {on && <span className="absolute top-0 h-[3px] w-9 rounded-b-full bg-pine" />}
               <I n={n.icon} className="h-[21px] w-[21px]" />
               <span className="text-[9.5px] font-bold leading-none">{n.label}</span>
+              {isTimer && hasActiveTimer && (
+                <span className="absolute top-1 right-2 flex h-2 w-2">
+                  <span className="pulse-dot absolute inline-flex h-full w-full rounded-full bg-pine" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-pine" />
+                </span>
+              )}
             </button>
           );
         })}

@@ -21,6 +21,7 @@ import {
   cleanText,
   fmtDur,
   getElapsed,
+  segmentsOf,
   sessionFingerprint,
   sessionsToCSV,
   uid,
@@ -29,6 +30,7 @@ import {
   type Category,
   type Lap,
   type Mode,
+  type Segment,
   type Session,
   type Settings,
   type TimerType,
@@ -79,6 +81,8 @@ interface AppCtx {
   toast: (kind: Toast["kind"], msg: string) => void;
   dismissToast: (id: number) => void;
   startTimer: (form: StartForm) => boolean;
+  /** Continue an existing session from history — resumes from its accumulated active time. */
+  continueSession: (session: Session) => boolean;
   pauseTimer: () => void;
   resumeTimer: () => void;
   /** Records a lap from wall-clock timestamps and persists immediately. */
@@ -320,6 +324,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [persistTimer, toast],
   );
 
+  /**
+   * Continue an existing session from history.
+   * Creates a new ActiveTimer with accumulatedMs = session.duration so the
+   * timer resumes from the previous active time. The timer stores
+   * continuesSessionId so Stop&Save updates the original session (adds a
+   * segment) instead of creating a duplicate.
+   */
+  const continueSession = useCallback(
+    (session: Session): boolean => {
+      if (timerRef.current) {
+        toast("error", "A timer is already running — finish or cancel it first.");
+        return false;
+      }
+      const now = Date.now();
+      const t: ActiveTimer = {
+        mode: session.mode,
+        category: session.category,
+        topic: session.topic,
+        task: session.task,
+        timerType: session.timerType,
+        startedAt: now, // new segment start
+        resumeAt: now,
+        accumulatedMs: session.duration, // resume from previous active time
+        pausedAt: null,
+        countdownMs: 0, // continuation is always stopwatch-style (no countdown reset)
+        status: "running",
+        laps: [], // new lap sequence for this continuation
+        continuesSessionId: session.id, // signal to stopAndSave to update this session
+      };
+      persistTimer(t);
+      setTimesUp(null);
+      toast("success", `Continuing · ${session.category} · from ${fmtDur(session.duration)}`);
+      return true;
+    },
+    [persistTimer, toast],
+  );
+
   const pauseTimer = useCallback(() => {
     const t = timerRef.current;
     if (!t || t.status !== "running" || t.resumeAt == null) return;
@@ -374,6 +415,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const buildSession = useCallback((t: ActiveTimer, endedAt: number, duration: number): Session => {
     const laps = Array.isArray(t.laps) ? t.laps : [];
+    // Build the current segment (start→end of this timer run)
+    const segment: Segment = {
+      startedAt: t.startedAt,
+      endedAt,
+      duration,
+      pausedMs: Math.max(0, endedAt - t.startedAt - duration),
+    };
     return {
       id: uid(),
       mode: t.mode,
@@ -385,6 +433,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       endedAt,
       duration,
       pausedMs: Math.max(0, endedAt - t.startedAt - duration),
+      segments: [segment],
       // laps are subdivisions of `duration` — saved as-is, no final lap is invented
       ...(laps.length > 0 ? { laps: [...laps] } : {}),
       createdAt: Date.now(),
@@ -401,6 +450,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
       toast("warn", "Session was under a second — nothing was saved.");
       return null;
     }
+
+    // If this timer is continuing an existing session, update it instead of creating a new one
+    if (t.continuesSessionId) {
+      const existing = sessions.find((s) => s.id === t.continuesSessionId);
+      if (existing) {
+        const segments = segmentsOf(existing);
+        const newSegment: Segment = {
+          startedAt: t.startedAt,
+          endedAt: now,
+          duration,
+          pausedMs: Math.max(0, now - t.startedAt - duration),
+        };
+        const updated: Session = {
+          ...existing,
+          endedAt: now,
+          duration: existing.duration + duration,
+          pausedMs: existing.pausedMs + Math.max(0, now - t.startedAt - duration),
+          segments: [...segments, newSegment],
+          // Merge laps if any were recorded in this continuation
+          ...(t.laps.length > 0 || existing.laps ? {
+            laps: [...(existing.laps || []), ...t.laps.map((l, i) => ({
+              ...l,
+              lapNumber: (existing.laps?.length || 0) + i + 1,
+              totalElapsed: existing.duration + l.totalElapsed,
+            }))],
+          } : {}),
+        };
+        try {
+          await dbPut("sessions", updated);
+        } catch {
+          toast("error", "Saved in memory, but writing to the local database failed.");
+        }
+        setSessions((prev) => [updated, ...prev.filter((s) => s.id !== updated.id)]);
+        toast("success", `Continued · ${t.category} · +${fmtDur(duration)} · total ${fmtDur(updated.duration)}`);
+        return updated;
+      }
+    }
+
+    // Otherwise create a new session
     const session = buildSession(t, now, duration);
     try {
       await dbPut("sessions", session);
@@ -410,7 +498,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSessions((prev) => [session, ...prev]);
     toast("success", `Saved · ${t.category} · ${fmtDur(duration)}`);
     return session;
-  }, [buildSession, clearTimer, toast]);
+  }, [buildSession, clearTimer, toast, sessions]);
 
   /* Countdown reaching 0 — exact end instant derived from timestamps. */
   finishCountdownRef.current = () => {
@@ -598,6 +686,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       toast,
       dismissToast,
       startTimer,
+      continueSession,
       pauseTimer,
       resumeTimer,
       recordLap,
@@ -612,9 +701,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }),
     [
       ready, sessions, categories, activeTimer, timesUp, settings, themeDark,
-      updateSettings, toasts, toast, dismissToast, startTimer, pauseTimer, resumeTimer,
-      recordLap, stopAndSave, cancelTimer, updateSession, deleteSession, addCategory,
-      deleteCategory, importData, clearAll,
+      updateSettings, toasts, toast, dismissToast, startTimer, continueSession,
+      pauseTimer, resumeTimer, recordLap, stopAndSave, cancelTimer, updateSession,
+      deleteSession, addCategory, deleteCategory, importData, clearAll,
     ],
   );
 

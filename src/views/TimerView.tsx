@@ -183,6 +183,48 @@ export function TimerView() {
     if (!list.some((c) => c.name === category)) setCategory(list[0]?.name ?? "");
   }, [ready, categories, mode, category]);
 
+  /* keyboard shortcuts — only when not typing in an input */
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Don't intercept if user is typing in an input/textarea
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+        return;
+      }
+
+      // Space = start/pause
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (!active) {
+          handleStart();
+        } else if (running) {
+          app.pauseTimer();
+        } else {
+          app.resumeTimer();
+        }
+      }
+
+      // L = lap (only when running)
+      if (e.key === "l" || e.key === "L") {
+        if (running) {
+          e.preventDefault();
+          app.recordLap();
+        }
+      }
+
+      // Escape = cancel (only when active)
+      if (e.key === "Escape") {
+        if (active) {
+          e.preventDefault();
+          setConfirmCancel(true);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [active, running, app]);
+
   const countdownMs =
     (clampInt(cdH, 0, 99) * 3600 + clampInt(cdM, 0, 59) * 60 + clampInt(cdS, 0, 59)) * 1000;
 
@@ -296,6 +338,12 @@ export function TimerView() {
               <p className="mt-4 text-center text-[13px] font-semibold truncate px-2" style={{ color: "#c8e9da" }}>
                 {activeTimer ? (
                   <>
+                    {activeTimer.continuesSessionId && (
+                      <span className="inline-flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-[0.14em] mb-1 block" style={{ color: "#7fd8c6" }}>
+                        <I n="rotate" className="h-3 w-3" />
+                        Continued session
+                      </span>
+                    )}
                     {activeTimer.category}
                     {activeTimer.topic && <span style={{ color: LCD_DIM }}> · {activeTimer.topic}</span>}
                     {activeTimer.task && <span style={{ color: LCD_DIM }}> · {activeTimer.task}</span>}

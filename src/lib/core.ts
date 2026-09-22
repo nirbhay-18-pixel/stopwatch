@@ -15,6 +15,13 @@ export interface Lap {
   remaining?: number; // countdown only: ms still on the countdown when the lap was taken
 }
 
+export interface Segment {
+  startedAt: number; // epoch ms — when this segment started
+  endedAt: number | null; // epoch ms — when this segment ended (null if still running)
+  duration: number; // active ms in this segment (excludes paused time)
+  pausedMs: number; // paused ms in this segment
+}
+
 export interface Session {
   id: string;
   mode: Mode;
@@ -22,16 +29,31 @@ export interface Session {
   topic: string;
   task: string;
   timerType: TimerType;
-  startedAt: number; // epoch ms, exact
-  endedAt: number; // epoch ms, exact
-  duration: number; // active ms (excludes paused time)
-  pausedMs: number; // total paused ms within the session
+  startedAt: number; // epoch ms, exact — first segment start
+  endedAt: number; // epoch ms, exact — last segment end
+  duration: number; // active ms (excludes paused time) — sum of all segment durations
+  pausedMs: number; // total paused ms within the session — sum of all segment pausedMs
   laps?: Lap[]; // subdivisions of `duration` — never extra time
+  segments?: Segment[]; // start/pause periods — for backward compat, treat as single segment if missing
   createdAt: number;
 }
 
 /** Laps for a session; old sessions saved before laps existed safely resolve to []. */
 export const lapsOf = (s: Session): Lap[] => (Array.isArray(s.laps) ? s.laps : []);
+
+/** Segments for a session; old sessions without segments are treated as having one segment. */
+export const segmentsOf = (s: Session): Segment[] => {
+  if (Array.isArray(s.segments) && s.segments.length > 0) return s.segments;
+  // Backward compat: synthesize a single segment from the session's top-level fields
+  return [
+    {
+      startedAt: s.startedAt,
+      endedAt: s.endedAt,
+      duration: s.duration,
+      pausedMs: s.pausedMs,
+    },
+  ];
+};
 
 export interface Category {
   id: string;
@@ -55,6 +77,7 @@ export interface ActiveTimer {
   countdownMs: number; // 0 for stopwatch
   status: TimerStatus;
   laps: Lap[]; // recorded this session; persisted on every change so refresh never loses them
+  continuesSessionId?: string; // if set, Stop&Save updates this existing session instead of creating a new one
 }
 
 export interface Settings {

@@ -9,6 +9,7 @@ import {
   fmtDur,
   isToday,
   isYesterday,
+  segmentsOf,
   startOfDay,
   startOfMonth,
   startOfWeek,
@@ -50,9 +51,45 @@ export function StatsView() {
   const list = useMemo(() => sessions.filter((s) => inPeriod(s, period, now)), [sessions, period, now]);
 
   const total = list.reduce((a, s) => a + s.duration, 0);
+  const totalPaused = list.reduce((a, s) => a + s.pausedMs, 0);
   const count = list.length;
   const avg = count > 0 ? total / count : 0;
   const longest = list.reduce<Session | null>((best, s) => (best == null || s.duration > best.duration ? s : best), null);
+  
+  // Count sessions with multiple segments (resumed/continued sessions)
+  const resumedCount = list.filter((s) => segmentsOf(s).length > 1).length;
+  
+  // Calculate streak (consecutive days with at least one session)
+  const streak = useMemo(() => {
+    const daysWithSessions = new Set<string>();
+    for (const s of sessions) {
+      daysWithSessions.add(dayKey(s.startedAt));
+    }
+    let currentStreak = 0;
+    const today = startOfDay(now);
+    for (let i = 0; i < 365; i++) {
+      const day = today - i * 86_400_000;
+      if (daysWithSessions.has(dayKey(day))) {
+        currentStreak++;
+      } else if (i > 0) {
+        // Allow today to be empty (day not finished yet)
+        break;
+      }
+    }
+    return currentStreak;
+  }, [sessions, now]);
+  
+  // Most active category
+  const mostActive = useMemo(() => {
+    const map = new Map<string, { name: string; ms: number }>();
+    for (const s of sessions) {
+      const cur = map.get(s.category);
+      if (cur) cur.ms += s.duration;
+      else map.set(s.category, { name: s.category, ms: s.duration });
+    }
+    const sorted = [...map.values()].sort((a, b) => b.ms - a.ms);
+    return sorted[0];
+  }, [sessions]);
 
   const breakdown = useMemo(() => {
     const map = new Map<string, { name: string; mode: Mode; ms: number }>();
@@ -118,10 +155,12 @@ export function StatsView() {
             <div className="card p-4">
               <p className="tick-label">Total · {periodLabel}</p>
               <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{fmtDur(total)}</p>
+              {totalPaused > 0 && <p className="text-[11px] text-mut mt-1">paused {fmtDur(totalPaused)}</p>}
             </div>
             <div className="card p-4">
               <p className="tick-label">Sessions</p>
               <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{count}</p>
+              {resumedCount > 0 && <p className="text-[11px] text-mut mt-1">{resumedCount} resumed</p>}
             </div>
             <div className="card p-4">
               <p className="tick-label">Avg session</p>
@@ -131,6 +170,15 @@ export function StatsView() {
               <p className="tick-label">Longest</p>
               <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{longest ? fmtDur(longest.duration) : "—"}</p>
               {longest && <p className="text-[11.5px] text-mut mt-1 truncate">{longest.category}{longest.topic && ` · ${longest.topic}`}</p>}
+            </div>
+            <div className="card p-4">
+              <p className="tick-label">Current streak</p>
+              <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{streak} day{streak === 1 ? "" : "s"}</p>
+            </div>
+            <div className="card p-4">
+              <p className="tick-label">Most active</p>
+              <p className="mt-2 font-mono font-extrabold text-[18px] tabular leading-none truncate">{mostActive ? mostActive.name : "—"}</p>
+              {mostActive && <p className="text-[11px] text-mut mt-1">{fmtDur(mostActive.ms)} total</p>}
             </div>
           </section>
 

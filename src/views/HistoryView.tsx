@@ -15,6 +15,7 @@ import {
   isToday,
   lapsOf,
   msToHMS,
+  segmentsOf,
   sessionMatches,
   startOfMonth,
   startOfWeek,
@@ -40,7 +41,7 @@ const RANGE_CHIPS: Array<{ v: RangeFilter; label: string }> = [
 ];
 
 export function HistoryView() {
-  const { sessions, deleteSession } = useApp();
+  const { sessions, deleteSession, continueSession, activeTimer } = useApp();
   const nav = useNav();
   const [q, setQ] = useState("");
   const [modeF, setModeF] = useState<ModeFilter>("all");
@@ -48,6 +49,7 @@ export function HistoryView() {
   const [editing, setEditing] = useState<Session | null>(null);
   const [deleting, setDeleting] = useState<Session | null>(null);
   const [openLaps, setOpenLaps] = useState<Set<string>>(new Set());
+  const [openSegments, setOpenSegments] = useState<Set<string>>(new Set());
 
   const toggleLaps = (id: string) =>
     setOpenLaps((prev) => {
@@ -56,6 +58,25 @@ export function HistoryView() {
       else next.add(id);
       return next;
     });
+
+  const toggleSegments = (id: string) =>
+    setOpenSegments((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const handleContinue = (session: Session) => {
+    if (activeTimer) {
+      // Can't continue if a timer is already running
+      return;
+    }
+    const success = continueSession(session);
+    if (success) {
+      nav.go("timer");
+    }
+  };
 
   const filtered = useMemo(() => {
     const now = Date.now();
@@ -239,6 +260,16 @@ export function HistoryView() {
                         <div className="flex flex-col items-end gap-2 shrink-0">
                           <p className="font-mono font-extrabold text-[16px] tabular leading-none">{fmtDur(s.duration)}</p>
                           <div className="flex gap-1">
+                            <button
+                              type="button"
+                              className="icon-btn h-8 w-8 text-pine hover:bg-pine/10"
+                              onClick={() => handleContinue(s)}
+                              disabled={!!activeTimer}
+                              aria-label={`Continue ${s.category} session from ${fmtDur(s.duration)}`}
+                              title={activeTimer ? "Finish the current timer first" : `Continue from ${fmtDur(s.duration)}`}
+                            >
+                              <I n="play" className="h-4 w-4" />
+                            </button>
                             <button type="button" className="icon-btn h-8 w-8" onClick={() => setEditing(s)} aria-label={`Edit ${s.category} session`}>
                               <I n="pencil" className="h-4 w-4" />
                             </button>
@@ -289,6 +320,49 @@ export function HistoryView() {
                                     <span>
                                       Total {fmtDur(lap.totalElapsed)}
                                       {lap.remaining != null && <> · {fmtDur(lap.remaining)} left</>}
+                                    </span>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+
+                      {/* segments — expandable, only for sessions with multiple segments (continued sessions) */}
+                      {segmentsOf(s).length > 1 && (
+                        <div className="mt-3 pt-3 border-t border-line">
+                          <button
+                            type="button"
+                            onClick={() => toggleSegments(s.id)}
+                            aria-expanded={openSegments.has(s.id)}
+                            aria-controls={`segments-${s.id}`}
+                            className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-other transition-all active:scale-[0.97]"
+                          >
+                            <I n="clock" className="h-4 w-4" />
+                            {segmentsOf(s).length} Segment{segmentsOf(s).length === 1 ? "" : "s"}
+                            <I
+                              n="chevronDown"
+                              className={`h-3.5 w-3.5 transition-transform duration-200 ${openSegments.has(s.id) ? "rotate-180" : ""}`}
+                            />
+                          </button>
+                          {openSegments.has(s.id) && (
+                            <ul id={`segments-${s.id}`} className="mt-2.5 grid gap-1.5 animate-view">
+                              {segmentsOf(s).map((seg, i) => (
+                                <li key={i} className="rounded-lg bg-raise/55 px-3 py-2">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span className="font-mono text-[11.5px] font-bold text-mut tabular">
+                                      Segment {i + 1}
+                                    </span>
+                                    <span className="font-mono text-[13px] font-extrabold tabular">{fmtDur(seg.duration)}</span>
+                                  </div>
+                                  <div className="mt-0.5 flex items-center justify-between gap-3 font-mono text-[11px] text-mut tabular">
+                                    <span>
+                                      {fmtDate(seg.startedAt)} · {fmtTime(seg.startedAt)}
+                                    </span>
+                                    <span>
+                                      {seg.endedAt ? fmtTime(seg.endedAt) : "running"}
+                                      {seg.pausedMs > 1000 && <> · paused {fmtDur(seg.pausedMs)}</>}
                                     </span>
                                   </div>
                                 </li>
