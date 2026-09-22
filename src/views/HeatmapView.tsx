@@ -28,13 +28,53 @@ const VIEW_MODES: Array<{ v: ViewMode; label: string }> = [
   { v: "day", label: "Day" },
 ];
 
+interface DayContribution {
+  session: Session;
+  activeMs: number; // active time in this day
+  pausedMs: number; // paused time in this day
+}
+
 interface DayData {
   date: number; // epoch ms at start of day
   key: string; // dayKey string
-  sessions: Session[];
+  contributions: DayContribution[];
   totalActive: number; // ms
   totalPaused: number; // ms
   categories: Map<string, { mode: Mode; ms: number }>;
+}
+
+/**
+ * Split a segment across midnight boundaries.
+ * Returns an array of { date, activeMs, pausedMs } for each day the segment touches.
+ */
+function splitSegmentAcrossDays(segment: { startedAt: number; endedAt: number | null; duration: number; pausedMs: number }): Array<{ date: number; activeMs: number; pausedMs: number }> {
+  const result: Array<{ date: number; activeMs: number; pausedMs: number }> = [];
+  const start = segment.startedAt;
+  const end = segment.endedAt || Date.now();
+  
+  const totalWallClock = end - start;
+  const pauseRatio = totalWallClock > 0 ? segment.pausedMs / totalWallClock : 0;
+  
+  let current = start;
+  while (current < end) {
+    const dayStart = startOfDay(current);
+    const dayEnd = dayStart + 86_400_000;
+    const segmentEnd = Math.min(end, dayEnd);
+    
+    const dayWallClock = segmentEnd - current;
+    const dayPausedMs = Math.round(dayWallClock * pauseRatio);
+    const dayActiveMs = dayWallClock - dayPausedMs;
+    
+    result.push({
+      date: dayStart,
+      activeMs: dayActiveMs,
+      pausedMs: dayPausedMs,
+    });
+    
+    current = dayEnd;
+  }
+  
+  return result;
 }
 
 function getIntensityLevel(ms: number): number {
@@ -62,33 +102,50 @@ export function HeatmapView() {
   const [viewMode, setViewMode] = useState<ViewMode>("year");
   const [selectedDay, setSelectedDay] = useState<DayData | null>(null);
 
-  // Build day data map
+  // Build day data map with cross-midnight splitting
   const dayMap = useMemo(() => {
     const map = new Map<string, DayData>();
+    
     for (const s of sessions) {
-      const key = dayKey(s.startedAt);
-      let day = map.get(key);
-      if (!day) {
-        day = {
-          date: startOfDay(s.startedAt),
-          key,
-          sessions: [],
-          totalActive: 0,
-          totalPaused: 0,
-          categories: new Map(),
-        };
-        map.set(key, day);
-      }
-      day.sessions.push(s);
-      day.totalActive += s.duration;
-      day.totalPaused += s.pausedMs;
-      const cat = day.categories.get(s.category);
-      if (cat) {
-        cat.ms += s.duration;
-      } else {
-        day.categories.set(s.category, { mode: s.mode, ms: s.duration });
+      const segments = segmentsOf(s);
+      
+      for (const segment of segments) {
+        const daySplits = splitSegmentAcrossDays(segment);
+        
+        for (const split of daySplits) {
+          const key = dayKey(split.date);
+          let day = map.get(key);
+          if (!day) {
+            day = {
+              date: split.date,
+              key,
+              contributions: [],
+              totalActive: 0,
+              totalPaused: 0,
+              categories: new Map(),
+            };
+            map.set(key, day);
+          }
+          
+          day.contributions.push({
+            session: s,
+            activeMs: split.activeMs,
+            pausedMs: split.pausedMs,
+          });
+          
+          day.totalActive += split.activeMs;
+          day.totalPaused += split.pausedMs;
+          
+          const cat = day.categories.get(s.category);
+          if (cat) {
+            cat.ms += split.activeMs;
+          } else {
+            day.categories.set(s.category, { mode: s.mode, ms: split.activeMs });
+          }
+        }
       }
     }
+    
     return map;
   }, [sessions]);
 
@@ -129,7 +186,7 @@ export function HeatmapView() {
   const viewStats = useMemo(() => {
     let totalActive = 0;
     let totalPaused = 0;
-    let sessionCount = 0;
+    const sessionIds = new Set<string>();
     const categories = new Map<string, { mode: Mode; ms: number }>();
 
     for (const date of dateRange) {
@@ -138,7 +195,9 @@ export function HeatmapView() {
       if (day) {
         totalActive += day.totalActive;
         totalPaused += day.totalPaused;
-        sessionCount += day.sessions.length;
+        for (const contrib of day.contributions) {
+          sessionIds.add(contrib.session.id);
+        }
         for (const [cat, data] of day.categories) {
           const existing = categories.get(cat);
           if (existing) {
@@ -150,7 +209,7 @@ export function HeatmapView() {
       }
     }
 
-    return { totalActive, totalPaused, sessionCount, categories };
+    return { totalActive, totalPaused, sessionCount: sessionIds.size, categories };
   }, [dateRange, dayMap]);
 
   const handleDayClick = (date: number) => {
@@ -451,7 +510,7 @@ function DayView({
     );
   }
 
-  const sortedSessions = day ? [...day.sessions].sort((a, b) => a.startedAt - b.startedAt) : [];
+  const sortedContributions = day ? [...day.contributions].sort((a, b) => a.session.startedAt - b.session.startedAt) : [];
 
   return (
     <div className="space-y-4">
@@ -459,31 +518,31 @@ function DayView({
         <p className="font-display font-bold text-[18px]">{fmtDateLong(date)}</p>
         {day && (
           <p className="text-[13px] text-mut mt-1">
-            {day.sessions.length} session{day.sessions.length === 1 ? "" : "s"} · {fmtDur(day.totalActive)} active
+            {day.contributions.length} session{day.contributions.length === 1 ? "" : "s"} · {fmtDur(day.totalActive)} active
           </p>
         )}
       </div>
 
       {/* Timeline */}
-      {sortedSessions.length > 0 && (
+      {sortedContributions.length > 0 && (
         <div className="space-y-2">
-          {sortedSessions.map((s) => (
-            <div key={s.id} className="card p-3 flex items-start gap-3">
+          {sortedContributions.map((contrib, idx) => (
+            <div key={`${contrib.session.id}-${idx}`} className="card p-3 flex items-start gap-3">
               <div className="flex flex-col items-center shrink-0">
-                <span className={`h-2 w-2 rounded-full ${s.mode === "study" ? "bg-study" : "bg-other"}`} />
+                <span className={`h-2 w-2 rounded-full ${contrib.session.mode === "study" ? "bg-study" : "bg-other"}`} />
                 <span className="w-px flex-1 bg-line my-1" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-mono text-[11px] text-mut tabular">
-                  {fmtTime(s.startedAt)} - {fmtTime(s.endedAt)}
-                </p>
                 <p className="text-[13px] font-semibold truncate">
-                  {s.category}
-                  {s.topic && <span className="text-mut font-normal"> · {s.topic}</span>}
+                  {contrib.session.category}
+                  {contrib.session.topic && <span className="text-mut font-normal"> · {contrib.session.topic}</span>}
                 </p>
                 <p className="text-[11px] text-mut mt-0.5">
-                  <span className="font-mono font-bold text-ink">{fmtDur(s.duration)}</span>
-                  {s.pausedMs > 1000 && <> · paused {fmtDur(s.pausedMs)}</>}
+                  <span className="font-mono font-bold text-ink">{fmtDur(contrib.activeMs)}</span>
+                  {contrib.pausedMs > 1000 && <> · paused {fmtDur(contrib.pausedMs)}</>}
+                  {contrib.activeMs !== contrib.session.duration && (
+                    <span className="text-mut"> · part of {fmtDur(contrib.session.duration)} session</span>
+                  )}
                 </p>
               </div>
             </div>
@@ -525,10 +584,13 @@ function DailySummaryModal({
   themeDark: boolean;
   onContinueSession: (session: Session) => void;
 }) {
-  const sortedSessions = [...day.sessions].sort((a, b) => a.startedAt - b.startedAt);
-  const longest = sortedSessions.reduce<Session | null>((best, s) => (best == null || s.duration > best.duration ? s : best), null);
-  const first = sortedSessions[0];
-  const last = sortedSessions[sortedSessions.length - 1];
+  const sortedContributions = [...day.contributions].sort((a, b) => a.session.startedAt - b.session.startedAt);
+  const longest = sortedContributions.reduce<{ contrib: DayContribution; activeMs: number } | null>(
+    (best, contrib) => (best == null || contrib.activeMs > best.activeMs ? { contrib, activeMs: contrib.activeMs } : best),
+    null,
+  );
+  const first = sortedContributions[0];
+  const last = sortedContributions[sortedContributions.length - 1];
 
   const sortedCategories = [...day.categories.entries()].sort((a, b) => b[1].ms - a[1].ms);
   const maxCat = sortedCategories[0]?.[1].ms ?? 0;
@@ -548,7 +610,7 @@ function DailySummaryModal({
           </div>
           <div className="rounded-lg bg-raise/50 p-3">
             <p className="tick-label">Sessions</p>
-            <p className="mt-1 font-mono font-extrabold text-[18px] tabular">{day.sessions.length}</p>
+            <p className="mt-1 font-mono font-extrabold text-[18px] tabular">{day.contributions.length}</p>
           </div>
           <div className="rounded-lg bg-raise/50 p-3">
             <p className="tick-label">Categories</p>
@@ -561,19 +623,19 @@ function DailySummaryModal({
           {longest && (
             <div>
               <p className="tick-label">Longest</p>
-              <p className="mt-1 font-mono font-bold text-[14px] tabular">{fmtDur(longest.duration)}</p>
+              <p className="mt-1 font-mono font-bold text-[14px] tabular">{fmtDur(longest.activeMs)}</p>
             </div>
           )}
           {first && (
             <div>
               <p className="tick-label">First activity</p>
-              <p className="mt-1 font-mono font-bold text-[14px] tabular">{fmtTime(first.startedAt)}</p>
+              <p className="mt-1 font-mono font-bold text-[14px] tabular">{fmtTime(first.session.startedAt)}</p>
             </div>
           )}
           {last && (
             <div>
               <p className="tick-label">Last activity</p>
-              <p className="mt-1 font-mono font-bold text-[14px] tabular">{fmtTime(last.endedAt)}</p>
+              <p className="mt-1 font-mono font-bold text-[14px] tabular">{fmtTime(last.session.endedAt)}</p>
             </div>
           )}
         </div>
@@ -605,26 +667,28 @@ function DailySummaryModal({
         )}
 
         {/* Sessions list */}
-        {sortedSessions.length > 0 && (
+        {sortedContributions.length > 0 && (
           <div>
             <h3 className="font-display font-bold text-[14px] tracking-tight mb-3">Sessions</h3>
             <div className="space-y-2 max-h-[300px] overflow-y-auto">
-              {sortedSessions.map((s) => (
-                <div key={s.id} className="rounded-lg bg-raise/50 p-3">
+              {sortedContributions.map((contrib, idx) => (
+                <div key={`${contrib.session.id}-${idx}`} className="rounded-lg bg-raise/50 p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <p className="text-[13px] font-semibold truncate">
-                        {s.category}
-                        {s.topic && <span className="text-mut font-normal"> · {s.topic}</span>}
-                        {s.task && <span className="text-mut font-normal"> · {s.task}</span>}
+                        {contrib.session.category}
+                        {contrib.session.topic && <span className="text-mut font-normal"> · {contrib.session.topic}</span>}
+                        {contrib.session.task && <span className="text-mut font-normal"> · {contrib.session.task}</span>}
                       </p>
-                      <p className="font-mono text-[11px] text-mut tabular mt-0.5">
-                        {fmtTime(s.startedAt)} - {fmtTime(s.endedAt)}
-                      </p>
+                      {contrib.activeMs !== contrib.session.duration && (
+                        <p className="text-[10px] text-mut mt-0.5">
+                          Part of {fmtDur(contrib.session.duration)} session
+                        </p>
+                      )}
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="font-mono text-[13px] font-bold tabular">{fmtDur(s.duration)}</p>
-                      {s.pausedMs > 1000 && <p className="text-[10px] text-mut tabular">paused {fmtDur(s.pausedMs)}</p>}
+                      <p className="font-mono text-[13px] font-bold tabular">{fmtDur(contrib.activeMs)}</p>
+                      {contrib.pausedMs > 1000 && <p className="text-[10px] text-mut tabular">paused {fmtDur(contrib.pausedMs)}</p>}
                     </div>
                   </div>
                 </div>
