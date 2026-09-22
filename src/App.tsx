@@ -6,6 +6,7 @@ import { TimerView } from "./views/TimerView";
 import { DashboardView } from "./views/DashboardView";
 import { HistoryView } from "./views/HistoryView";
 import { StatsView } from "./views/StatsView";
+import { HeatmapView } from "./views/HeatmapView";
 import { SettingsView } from "./views/SettingsView";
 import { VIEW_KEY, fmtClock, getElapsed } from "./lib/core";
 
@@ -14,6 +15,7 @@ const NAV: Array<{ v: View; label: string; icon: IconName }> = [
   { v: "dashboard", label: "Dashboard", icon: "grid" },
   { v: "history", label: "History", icon: "history" },
   { v: "stats", label: "Statistics", icon: "chart" },
+  { v: "heatmap", label: "Heatmap", icon: "heatmap" },
   { v: "settings", label: "Settings", icon: "sliders" },
 ];
 
@@ -168,7 +170,7 @@ function MobileNav({ view, go }: { view: View; go: (v: View) => void }) {
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       aria-label="Main navigation"
     >
-      <div className="grid grid-cols-5">
+      <div className="grid grid-cols-6">
         {NAV.map((n) => {
           const on = view === n.v;
           const isTimer = n.v === "timer";
@@ -267,6 +269,7 @@ function Shell() {
             {view === "dashboard" && <DashboardView />}
             {view === "history" && <HistoryView />}
             {view === "stats" && <StatsView />}
+            {view === "heatmap" && <HeatmapView />}
             {view === "settings" && <SettingsView />}
           </div>
         </div>

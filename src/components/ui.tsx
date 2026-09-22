@@ -10,7 +10,7 @@ import { useApp } from "../state/AppContext";
 
 /* --------------------------------- icons --------------------------------- */
 export type IconName =
-  | "grid" | "timer" | "history" | "chart" | "sliders"
+  | "grid" | "timer" | "history" | "chart" | "sliders" | "heatmap"
   | "sun" | "moon" | "monitor"
   | "play" | "pause" | "stop" | "rotate"
   | "plus" | "x" | "check" | "trash" | "pencil" | "search"
@@ -50,6 +50,19 @@ const STROKE_ICONS: Record<string, ReactNode> = {
       <circle cx="6" cy="14.5" r="2.1" />
       <circle cx="12" cy="8" r="2.1" />
       <circle cx="18" cy="16.5" r="2.1" />
+    </>
+  ),
+  heatmap: (
+    <>
+      <rect x="3" y="3" width="4" height="4" rx="0.5" />
+      <rect x="10" y="3" width="4" height="4" rx="0.5" />
+      <rect x="17" y="3" width="4" height="4" rx="0.5" />
+      <rect x="3" y="10" width="4" height="4" rx="0.5" />
+      <rect x="10" y="10" width="4" height="4" rx="0.5" />
+      <rect x="17" y="10" width="4" height="4" rx="0.5" />
+      <rect x="3" y="17" width="4" height="4" rx="0.5" />
+      <rect x="10" y="17" width="4" height="4" rx="0.5" />
+      <rect x="17" y="17" width="4" height="4" rx="0.5" />
     </>
   ),
   sun: (
