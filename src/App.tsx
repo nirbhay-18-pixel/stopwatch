@@ -222,7 +222,7 @@ function Splash() {
 
 function Shell() {
   const { ready } = useApp();
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, isConfigured } = useAuth();
   const [view, setView] = useState<View>(() => {
     try {
       const v = localStorage.getItem(VIEW_KEY);
@@ -246,16 +246,17 @@ function Shell() {
 
   const navVal = useMemo(() => ({ view, go }), [view]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Show loading while checking auth
-  if (authLoading) {
+  // Show loading while checking auth (only if Supabase is configured)
+  if (isConfigured && authLoading) {
     return <Splash />;
   }
 
-  // Show auth screen if not logged in
-  if (!user) {
+  // Show auth screen if Supabase is configured and user is not logged in
+  if (isConfigured && !user) {
     return <AuthScreen />;
   }
 
+  // If Supabase is not configured, skip auth and show main app (local-only mode)
   if (!ready) return <Splash />;
 
   return (

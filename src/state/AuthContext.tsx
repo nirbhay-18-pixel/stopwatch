@@ -54,6 +54,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         setState({ user: null, profile: null, loading: false, error: null });
       }
+    }).catch(() => {
+      setState({ user: null, profile: null, loading: false, error: null });
     });
 
     // Listen for auth changes
