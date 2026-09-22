@@ -19,14 +19,29 @@ import {
   type Session,
 } from "../lib/core";
 
-type ViewMode = "year" | "month" | "week" | "day";
+type DrillLevel = "year" | "month" | "day";
 
-const VIEW_MODES: Array<{ v: ViewMode; label: string }> = [
-  { v: "year", label: "Year" },
-  { v: "month", label: "Month" },
-  { v: "week", label: "Week" },
-  { v: "day", label: "Day" },
-];
+interface YearStats {
+  totalActive: number;
+  totalPaused: number;
+  activeDays: number;
+  sessionCount: number;
+  avgPerActiveDay: number;
+  mostActiveMonth: number; // 0-11
+  mostActiveDay: number; // epoch ms
+  longestSession: Session | null;
+  topCategory: string;
+  monthlyTotals: number[]; // 12 months
+  categoryBreakdown: Map<string, { mode: Mode; ms: number }>;
+}
+
+interface MonthStats {
+  totalActive: number;
+  totalPaused: number;
+  activeDays: number;
+  sessionCount: number;
+  categoryBreakdown: Map<string, { mode: Mode; ms: number }>;
+}
 
 interface DayContribution {
   session: Session;
@@ -99,10 +114,25 @@ export function HeatmapView() {
   const { sessions, activeTimer, themeDark } = useApp();
   const nav = useNav();
   const now = useNow(activeTimer !== null);
-  const [viewMode, setViewMode] = useState<ViewMode>("year");
+  
+  // Navigation state
+  const [drillLevel, setDrillLevel] = useState<DrillLevel>("year");
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
   const [selectedDay, setSelectedDay] = useState<DayData | null>(null);
 
-  // Build day data map with cross-midnight splitting
+  // Get available years from sessions
+  const availableYears = useMemo(() => {
+    const years = new Set<number>();
+    for (const s of sessions) {
+      years.add(new Date(s.startedAt).getFullYear());
+    }
+    // Always include current year
+    years.add(new Date().getFullYear());
+    return Array.from(years).sort((a, b) => b - a); // descending
+  }, [sessions]);
+
+  // Build day data map with cross-midnight splitting (cached for all time)
   const dayMap = useMemo(() => {
     const map = new Map<string, DayData>();
     
@@ -149,82 +179,173 @@ export function HeatmapView() {
     return map;
   }, [sessions]);
 
-  // Generate date range based on view mode
+  // Calculate yearly statistics
+  const yearStats = useMemo((): YearStats => {
+    const monthlyTotals = Array(12).fill(0);
+    const categoryBreakdown = new Map<string, { mode: Mode; ms: number }>();
+    let totalActive = 0;
+    let totalPaused = 0;
+    const activeDaysSet = new Set<string>();
+    const sessionIds = new Set<string>();
+    let longestSession: Session | null = null;
+    let mostActiveDayKey = "";
+    let mostActiveDayMs = 0;
+
+    for (const [key, day] of dayMap) {
+      const dayDate = new Date(day.date);
+      if (dayDate.getFullYear() !== selectedYear) continue;
+
+      totalActive += day.totalActive;
+      totalPaused += day.totalPaused;
+      activeDaysSet.add(key);
+      
+      const month = dayDate.getMonth();
+      monthlyTotals[month] += day.totalActive;
+
+      if (day.totalActive > mostActiveDayMs) {
+        mostActiveDayMs = day.totalActive;
+        mostActiveDayKey = key;
+      }
+
+      for (const contrib of day.contributions) {
+        sessionIds.add(contrib.session.id);
+        if (!longestSession || contrib.session.duration > longestSession.duration) {
+          longestSession = contrib.session;
+        }
+        
+        const cat = categoryBreakdown.get(contrib.session.category);
+        if (cat) {
+          cat.ms += contrib.activeMs;
+        } else {
+          categoryBreakdown.set(contrib.session.category, { 
+            mode: contrib.session.mode, 
+            ms: contrib.activeMs 
+          });
+        }
+      }
+    }
+
+    const mostActiveMonth = monthlyTotals.indexOf(Math.max(...monthlyTotals));
+    const avgPerActiveDay = activeDaysSet.size > 0 ? totalActive / activeDaysSet.size : 0;
+    const topCategory = Array.from(categoryBreakdown.entries())
+      .sort((a, b) => b[1].ms - a[1].ms)[0]?.[0] || "";
+
+    return {
+      totalActive,
+      totalPaused,
+      activeDays: activeDaysSet.size,
+      sessionCount: sessionIds.size,
+      avgPerActiveDay,
+      mostActiveMonth,
+      mostActiveDay: mostActiveDayKey ? dayMap.get(mostActiveDayKey)?.date || 0 : 0,
+      longestSession,
+      topCategory,
+      monthlyTotals,
+      categoryBreakdown,
+    };
+  }, [dayMap, selectedYear]);
+
+  // Calculate monthly statistics
+  const monthStats = useMemo((): MonthStats => {
+    const categoryBreakdown = new Map<string, { mode: Mode; ms: number }>();
+    let totalActive = 0;
+    let totalPaused = 0;
+    const activeDaysSet = new Set<string>();
+    const sessionIds = new Set<string>();
+
+    for (const [key, day] of dayMap) {
+      const dayDate = new Date(day.date);
+      if (dayDate.getFullYear() !== selectedYear || dayDate.getMonth() !== selectedMonth) continue;
+
+      totalActive += day.totalActive;
+      totalPaused += day.totalPaused;
+      activeDaysSet.add(key);
+
+      for (const contrib of day.contributions) {
+        sessionIds.add(contrib.session.id);
+        
+        const cat = categoryBreakdown.get(contrib.session.category);
+        if (cat) {
+          cat.ms += contrib.activeMs;
+        } else {
+          categoryBreakdown.set(contrib.session.category, { 
+            mode: contrib.session.mode, 
+            ms: contrib.activeMs 
+          });
+        }
+      }
+    }
+
+    return {
+      totalActive,
+      totalPaused,
+      activeDays: activeDaysSet.size,
+      sessionCount: sessionIds.size,
+      categoryBreakdown,
+    };
+  }, [dayMap, selectedYear, selectedMonth]);
+
+  // Generate date range based on drill level
   const dateRange = useMemo(() => {
-    const today = startOfDay(now);
     const dates: number[] = [];
 
-    if (viewMode === "year") {
-      // Last 365 days
-      for (let i = 364; i >= 0; i--) {
-        dates.push(today - i * 86_400_000);
+    if (drillLevel === "year") {
+      // All days in the selected year
+      const yearStart = new Date(selectedYear, 0, 1);
+      const yearEnd = new Date(selectedYear + 1, 0, 1);
+      const daysInYear = Math.ceil((yearEnd.getTime() - yearStart.getTime()) / 86_400_000);
+      for (let i = 0; i < daysInYear; i++) {
+        dates.push(yearStart.getTime() + i * 86_400_000);
       }
-    } else if (viewMode === "month") {
-      // Current month
-      const monthStart = startOfMonth(today);
-      const monthEnd = new Date(monthStart);
-      monthEnd.setMonth(monthEnd.getMonth() + 1);
-      const daysInMonth = Math.ceil((monthEnd.getTime() - monthStart) / 86_400_000);
+    } else if (drillLevel === "month") {
+      // All days in the selected month
+      const monthStart = new Date(selectedYear, selectedMonth, 1);
+      const monthEnd = new Date(selectedYear, selectedMonth + 1, 1);
+      const daysInMonth = Math.ceil((monthEnd.getTime() - monthStart.getTime()) / 86_400_000);
       for (let i = 0; i < daysInMonth; i++) {
-        dates.push(monthStart + i * 86_400_000);
+        dates.push(monthStart.getTime() + i * 86_400_000);
       }
-    } else if (viewMode === "week") {
-      // Current week (Monday to Sunday)
-      const weekStart = startOfWeek(today);
-      for (let i = 0; i < 7; i++) {
-        dates.push(weekStart + i * 86_400_000);
+    } else if (drillLevel === "day") {
+      // Just the selected day (if we have one)
+      if (selectedDay) {
+        dates.push(selectedDay.date);
       }
-    } else if (viewMode === "day") {
-      // Just today
-      dates.push(today);
     }
 
     return dates;
-  }, [viewMode, now]);
-
-  // Calculate stats for selected view
-  const viewStats = useMemo(() => {
-    let totalActive = 0;
-    let totalPaused = 0;
-    const sessionIds = new Set<string>();
-    const categories = new Map<string, { mode: Mode; ms: number }>();
-
-    for (const date of dateRange) {
-      const key = dayKey(date);
-      const day = dayMap.get(key);
-      if (day) {
-        totalActive += day.totalActive;
-        totalPaused += day.totalPaused;
-        for (const contrib of day.contributions) {
-          sessionIds.add(contrib.session.id);
-        }
-        for (const [cat, data] of day.categories) {
-          const existing = categories.get(cat);
-          if (existing) {
-            existing.ms += data.ms;
-          } else {
-            categories.set(cat, { ...data });
-          }
-        }
-      }
-    }
-
-    return { totalActive, totalPaused, sessionCount: sessionIds.size, categories };
-  }, [dateRange, dayMap]);
+  }, [drillLevel, selectedYear, selectedMonth, selectedDay]);
 
   const handleDayClick = (date: number) => {
     const key = dayKey(date);
     const day = dayMap.get(key);
     if (day) {
-      setSelectedDay(day);
+      if (drillLevel === "year") {
+        // Drill down to month view
+        setSelectedMonth(new Date(date).getMonth());
+        setDrillLevel("month");
+      } else if (drillLevel === "month") {
+        // Open day detail modal
+        setSelectedDay(day);
+      }
     }
   };
 
-  const handleContinueSession = (session: Session) => {
-    if (activeTimer) return;
-    // This would need to be implemented in AppContext
-    // For now, just navigate to timer
-    nav.go("timer");
+  const handleMonthClick = (month: number) => {
+    setSelectedMonth(month);
+    setDrillLevel("month");
+  };
+
+  const handleBack = () => {
+    if (drillLevel === "month") {
+      setDrillLevel("year");
+    } else if (drillLevel === "day") {
+      setDrillLevel("month");
+    }
+  };
+
+  const handleYearChange = (year: number) => {
+    setSelectedYear(year);
+    setDrillLevel("year");
   };
 
   return (
@@ -236,39 +357,130 @@ export function HeatmapView() {
         </div>
       </header>
 
-      {/* View mode selector */}
-      <div className="flex gap-1.5 overflow-x-auto pb-1" role="group" aria-label="View mode">
-        {VIEW_MODES.map((m) => (
-          <button
-            key={m.v}
-            className={viewMode === m.v ? "chip-on" : "chip-off"}
-            aria-pressed={viewMode === m.v}
-            onClick={() => setViewMode(m.v)}
-          >
-            {m.label}
-          </button>
-        ))}
+      {/* Year selector */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <label className="text-sm font-semibold text-mut">Year:</label>
+        <div className="flex gap-1.5 overflow-x-auto" role="group" aria-label="Year selector">
+          {availableYears.map((year) => (
+            <button
+              key={year}
+              className={selectedYear === year && drillLevel === "year" ? "chip-on" : "chip-off"}
+              aria-pressed={selectedYear === year && drillLevel === "year"}
+              onClick={() => handleYearChange(year)}
+            >
+              {year}
+            </button>
+          ))}
+        </div>
       </div>
 
+      {/* Breadcrumb navigation */}
+      {drillLevel !== "year" && (
+        <div className="flex items-center gap-2 text-sm">
+          <button
+            onClick={() => setDrillLevel("year")}
+            className="text-pine hover:text-pinedeep font-semibold"
+          >
+            {selectedYear}
+          </button>
+          {drillLevel === "month" && (
+            <>
+              <I n="arrowRight" className="h-4 w-4 text-mut" />
+              <span className="font-semibold">
+                {new Date(selectedYear, selectedMonth).toLocaleDateString([], { month: "long" })}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Summary cards */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-2.5" aria-label="Summary">
-        <div className="card p-4">
-          <p className="tick-label">Total active</p>
-          <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{fmtDur(viewStats.totalActive)}</p>
-        </div>
-        <div className="card p-4">
-          <p className="tick-label">Total paused</p>
-          <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{fmtDur(viewStats.totalPaused)}</p>
-        </div>
-        <div className="card p-4">
-          <p className="tick-label">Sessions</p>
-          <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{viewStats.sessionCount}</p>
-        </div>
-        <div className="card p-4">
-          <p className="tick-label">Categories</p>
-          <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{viewStats.categories.size}</p>
-        </div>
-      </section>
+      {drillLevel === "year" && (
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-2.5" aria-label="Year summary">
+          <div className="card p-4">
+            <p className="tick-label">Total active</p>
+            <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{fmtDur(yearStats.totalActive)}</p>
+          </div>
+          <div className="card p-4">
+            <p className="tick-label">Active days</p>
+            <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{yearStats.activeDays}</p>
+          </div>
+          <div className="card p-4">
+            <p className="tick-label">Sessions</p>
+            <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{yearStats.sessionCount}</p>
+          </div>
+          <div className="card p-4">
+            <p className="tick-label">Avg/day</p>
+            <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{fmtDur(yearStats.avgPerActiveDay)}</p>
+          </div>
+        </section>
+      )}
+
+      {drillLevel === "month" && (
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-2.5" aria-label="Month summary">
+          <div className="card p-4">
+            <p className="tick-label">Total active</p>
+            <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{fmtDur(monthStats.totalActive)}</p>
+          </div>
+          <div className="card p-4">
+            <p className="tick-label">Active days</p>
+            <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{monthStats.activeDays}</p>
+          </div>
+          <div className="card p-4">
+            <p className="tick-label">Sessions</p>
+            <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{monthStats.sessionCount}</p>
+          </div>
+          <div className="card p-4">
+            <p className="tick-label">Categories</p>
+            <p className="mt-2 font-mono font-extrabold text-[22px] tabular leading-none">{monthStats.categoryBreakdown.size}</p>
+          </div>
+        </section>
+      )}
+
+      {/* Yearly highlights */}
+      {drillLevel === "year" && yearStats.totalActive > 0 && (
+        <section className="card p-5" aria-label="Yearly highlights">
+          <h2 className="font-display font-bold text-[16px] tracking-tight mb-4">Highlights</h2>
+          <div className="grid sm:grid-cols-2 gap-4 text-sm">
+            <div>
+              <p className="tick-label">Most active month</p>
+              <p className="mt-1 font-semibold">
+                {new Date(selectedYear, yearStats.mostActiveMonth).toLocaleDateString([], { month: "long" })}
+                <span className="ml-2 text-mut font-normal">{fmtDur(yearStats.monthlyTotals[yearStats.mostActiveMonth])}</span>
+              </p>
+            </div>
+            {yearStats.mostActiveDay > 0 && (
+              <div>
+                <p className="tick-label">Most active day</p>
+                <p className="mt-1 font-semibold">
+                  {fmtDate(yearStats.mostActiveDay)}
+                  <span className="ml-2 text-mut font-normal">{fmtDur(yearStats.monthlyTotals[new Date(yearStats.mostActiveDay).getMonth()] > 0 ? dayMap.get(dayKey(yearStats.mostActiveDay))?.totalActive || 0 : 0)}</span>
+                </p>
+              </div>
+            )}
+            {yearStats.longestSession && (
+              <div>
+                <p className="tick-label">Longest session</p>
+                <p className="mt-1 font-semibold">
+                  {fmtDur(yearStats.longestSession.duration)}
+                  <span className="ml-2 text-mut font-normal">{yearStats.longestSession.category}</span>
+                </p>
+              </div>
+            )}
+            {yearStats.topCategory && (
+              <div>
+                <p className="tick-label">Top category</p>
+                <p className="mt-1 font-semibold">
+                  {yearStats.topCategory}
+                  <span className="ml-2 text-mut font-normal">
+                    {fmtDur(yearStats.categoryBreakdown.get(yearStats.topCategory)?.ms || 0)}
+                  </span>
+                </p>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Heatmap grid */}
       {sessions.length === 0 ? (
@@ -286,22 +498,16 @@ export function HeatmapView() {
       ) : (
         <section className="card p-5" aria-label="Activity heatmap">
           <h2 className="font-display font-bold text-[16px] tracking-tight mb-4">
-            {viewMode === "year" && "Last 365 days"}
-            {viewMode === "month" && new Date(dateRange[0]).toLocaleDateString([], { month: "long", year: "numeric" })}
-            {viewMode === "week" && "This week"}
-            {viewMode === "day" && "Today"}
+            {drillLevel === "year" && `${selectedYear} Activity`}
+            {drillLevel === "month" && new Date(selectedYear, selectedMonth).toLocaleDateString([], { month: "long", year: "numeric" })}
           </h2>
 
           {/* Heatmap grid */}
           <div className="overflow-x-auto">
-            {viewMode === "year" ? (
+            {drillLevel === "year" ? (
               <YearHeatmap dates={dateRange} dayMap={dayMap} themeDark={themeDark} onDayClick={handleDayClick} />
-            ) : viewMode === "month" ? (
-              <MonthHeatmap dates={dateRange} dayMap={dayMap} themeDark={themeDark} onDayClick={handleDayClick} />
-            ) : viewMode === "week" ? (
-              <WeekHeatmap dates={dateRange} dayMap={dayMap} themeDark={themeDark} onDayClick={handleDayClick} />
             ) : (
-              <DayView date={dateRange[0]} dayMap={dayMap} themeDark={themeDark} activeTimer={activeTimer} now={now} />
+              <MonthHeatmap dates={dateRange} dayMap={dayMap} themeDark={themeDark} onDayClick={handleDayClick} />
             )}
           </div>
 
@@ -321,13 +527,63 @@ export function HeatmapView() {
         </section>
       )}
 
+      {/* Monthly breakdown for year view */}
+      {drillLevel === "year" && yearStats.totalActive > 0 && (
+        <section className="card p-5" aria-label="Monthly breakdown">
+          <h2 className="font-display font-bold text-[16px] tracking-tight mb-4">Monthly Breakdown</h2>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {yearStats.monthlyTotals.map((ms, month) => (
+              <button
+                key={month}
+                onClick={() => handleMonthClick(month)}
+                className="card p-3 hover:border-pine/50 transition-colors text-left"
+              >
+                <p className="text-sm font-semibold">
+                  {new Date(selectedYear, month).toLocaleDateString([], { month: "short" })}
+                </p>
+                <p className="mt-1 font-mono text-[15px] font-bold tabular">
+                  {ms > 0 ? fmtDur(ms) : "—"}
+                </p>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Category breakdown for month view */}
+      {drillLevel === "month" && monthStats.totalActive > 0 && (
+        <section className="card p-5" aria-label="Category breakdown">
+          <h2 className="font-display font-bold text-[16px] tracking-tight mb-4">By Category</h2>
+          <div className="space-y-2">
+            {Array.from(monthStats.categoryBreakdown.entries())
+              .sort((a, b) => b[1].ms - a[1].ms)
+              .map(([cat, data]) => {
+                const pct = monthStats.totalActive > 0 ? (data.ms / monthStats.totalActive) * 100 : 0;
+                return (
+                  <div key={cat} className="flex items-center gap-3">
+                    <span className={`h-2 w-2 rounded-full shrink-0 ${data.mode === "study" ? "bg-study" : "bg-other"}`} />
+                    <span className="w-[120px] truncate text-[13px] font-semibold">{cat}</span>
+                    <div className="flex-1 h-2 rounded-full bg-raise overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${data.mode === "study" ? "bg-study" : "bg-other"}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="w-[60px] text-right font-mono text-[12px] font-bold tabular">{fmtDur(data.ms)}</span>
+                    <span className="w-[40px] text-right text-[11px] text-mut tabular">{pct.toFixed(0)}%</span>
+                  </div>
+                );
+              })}
+          </div>
+        </section>
+      )}
+
       {/* Daily summary modal */}
       {selectedDay && (
         <DailySummaryModal
           day={selectedDay}
           onClose={() => setSelectedDay(null)}
           themeDark={themeDark}
-          onContinueSession={handleContinueSession}
         />
       )}
     </div>
@@ -577,12 +833,10 @@ function DailySummaryModal({
   day,
   onClose,
   themeDark,
-  onContinueSession,
 }: {
   day: DayData;
   onClose: () => void;
   themeDark: boolean;
-  onContinueSession: (session: Session) => void;
 }) {
   const sortedContributions = [...day.contributions].sort((a, b) => a.session.startedAt - b.session.startedAt);
   const longest = sortedContributions.reduce<{ contrib: DayContribution; activeMs: number } | null>(
