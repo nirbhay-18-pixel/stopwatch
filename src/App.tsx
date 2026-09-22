@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { AppProvider, useApp, useNow } from "./state/AppContext";
+import { AuthProvider, useAuth } from "./state/AuthContext";
 import { NavContext, type View } from "./state/nav";
 import { I, Toasts, type IconName } from "./components/ui";
+import { AuthScreen } from "./components/AuthScreen";
 import { TimerView } from "./views/TimerView";
 import { DashboardView } from "./views/DashboardView";
 import { HistoryView } from "./views/HistoryView";
@@ -220,6 +222,7 @@ function Splash() {
 
 function Shell() {
   const { ready } = useApp();
+  const { user, loading: authLoading } = useAuth();
   const [view, setView] = useState<View>(() => {
     try {
       const v = localStorage.getItem(VIEW_KEY);
@@ -242,6 +245,16 @@ function Shell() {
   goFn = go;
 
   const navVal = useMemo(() => ({ view, go }), [view]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Show loading while checking auth
+  if (authLoading) {
+    return <Splash />;
+  }
+
+  // Show auth screen if not logged in
+  if (!user) {
+    return <AuthScreen />;
+  }
 
   if (!ready) return <Splash />;
 
@@ -283,8 +296,10 @@ function Shell() {
 
 export default function App() {
   return (
-    <AppProvider>
-      <Shell />
-    </AppProvider>
+    <AuthProvider>
+      <AppProvider>
+        <Shell />
+      </AppProvider>
+    </AuthProvider>
   );
 }

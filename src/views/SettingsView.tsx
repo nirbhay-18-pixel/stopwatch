@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { useApp, useExporters } from "../state/AppContext";
+import { useAuth } from "../state/AuthContext";
 import { Btn, Confirm, I, Modal, Segmented, type IconName } from "../components/ui";
 import { fmtDate, parseBackup, type BackupPayload } from "../lib/core";
 
@@ -103,6 +104,9 @@ export function SettingsView() {
           </div>
         </div>
       </section>
+
+      {/* account & sync */}
+      <AccountSection />
 
       {/* defaults */}
       <section className="card p-5" aria-label="Defaults">
@@ -300,5 +304,61 @@ export function SettingsView() {
         }
       />
     </div>
+  );
+}
+
+function AccountSection() {
+  const { user, profile, logout, isConfigured } = useAuth();
+  const [confirmLogout, setConfirmLogout] = useState(false);
+
+  if (!isConfigured) {
+    return (
+      <section className="card p-5 border-study/40" aria-label="Account">
+        <h2 className="font-display font-bold text-[16px] tracking-tight mb-2 text-study">Cloud Sync</h2>
+        <Row icon="database" title="Not configured" desc="Add Supabase credentials to enable cloud sync across devices.">
+          <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-study bg-study/10 px-2 py-1 rounded">
+            Setup required
+          </span>
+        </Row>
+      </section>
+    );
+  }
+
+  if (!user) {
+    return null; // Auth screen will be shown
+  }
+
+  return (
+    <>
+      <section className="card p-5" aria-label="Account">
+        <h2 className="font-display font-bold text-[16px] tracking-tight mb-2">Account</h2>
+        <div className="divide-y divide-line">
+          <Row icon="database" title="Signed in" desc={user.email || "Unknown email"}>
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-pine bg-pine/10 px-2 py-1 rounded">
+              <span className="h-1.5 w-1.5 rounded-full bg-pine" />
+              Synced
+            </span>
+          </Row>
+          <Row icon="sliders" title="Sign out" desc="Sign out from this device. Your data remains in the cloud.">
+            <Btn size="sm" variant="dangersoft" icon="arrowRight" onClick={() => setConfirmLogout(true)}>
+              Sign out
+            </Btn>
+          </Row>
+        </div>
+      </section>
+
+      <Confirm
+        open={confirmLogout}
+        onClose={() => setConfirmLogout(false)}
+        onConfirm={() => void logout()}
+        title="Sign out?"
+        body={
+          <>
+            You will be signed out from this device. Your data is safely stored in the cloud and will be available when you sign in again.
+          </>
+        }
+        confirmLabel="Sign out"
+      />
+    </>
   );
 }
