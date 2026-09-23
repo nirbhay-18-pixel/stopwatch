@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useApp, useExporters } from "../state/AppContext";
 import { useAuth } from "../state/AuthContext";
 import { Btn, Confirm, I, Modal, Segmented, type IconName } from "../components/ui";
+import { SupabaseConnectionTest } from "../components/SupabaseConnectionTest";
 import { fmtDate, parseBackup, type BackupPayload } from "../lib/core";
 
 type Strategy = "merge" | "replace";
@@ -313,13 +314,9 @@ function AccountSection() {
 
   if (!isConfigured) {
     return (
-      <section className="card p-5 border-study/40" aria-label="Account">
-        <h2 className="font-display font-bold text-[16px] tracking-tight mb-2 text-study">Cloud Sync</h2>
-        <Row icon="database" title="Not configured" desc="Add Supabase credentials to enable cloud sync across devices.">
-          <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-study bg-study/10 px-2 py-1 rounded">
-            Setup required
-          </span>
-        </Row>
+      <section className="card p-5" aria-label="Account">
+        <h2 className="font-display font-bold text-[16px] tracking-tight mb-4">Cloud Sync</h2>
+        <SupabaseConnectionTest />
       </section>
     );
   }
